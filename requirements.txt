@@ -1,0 +1,10 @@
+playwright
+langchain 
+langchain-openai 
+langgraph 
+sentence-transformers 
+openai 
+nest_asyncio 
+PyPDF2
+python-dotenv
+sumy
