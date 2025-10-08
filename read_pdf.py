@@ -31,3 +31,4 @@ def read_pdf(file_path):
     clean_text = re.sub(r"\n(?=\S)", " ", clean_text)
 
     return clean_text
+
