@@ -1,10 +1,15 @@
-
+# LangGraph + LangChain + Tools
+# High-level: Agent to login to WorkAtAStartup, fetch job links, extract job descriptions,
+# embed + match to resume, generate optional cover letter, and log results.
 
 import os
 from dotenv import load_dotenv
 
+# Note: Load your GOOGLE_API_KEY from environment variables instead of OPENAI_API_KEY
 load_dotenv()
-api_key = os.getenv("OPENAI_API_KEY")
+# The LangChain integration will typically look for GOOGLE_API_KEY environment variable.
+# You can optionally set api_key = os.getenv("GOOGLE_API_KEY") if needed, 
+# but ChatGoogleGenerativeAI is often configured to find it automatically.
 
 import uuid
 import asyncio
@@ -50,6 +55,9 @@ def embed_resume(
     return state
 
 
+# --- Playwright Functions (get_job_links, get_job_description) remain the same ---
+# ... (omitted for brevity, assume they are pasted here unchanged) ...
+
 async def get_job_links(state: AgentState) -> AgentState:
     """Log into WorkAtAStartup and return a list of job posting URLs."""
     username = state["username"]
@@ -57,7 +65,7 @@ async def get_job_links(state: AgentState) -> AgentState:
     filter_url = state["filter_url"]
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=False)
         context = await browser.new_context()
 
         # Block fonts/images for speed
@@ -123,7 +131,6 @@ async def get_job_links(state: AgentState) -> AgentState:
         return state
 
 
-
 async def get_job_description(job_url: str) -> str:
     """Fetch the job description from a specific job page using custom classnames."""
     async with async_playwright() as p:
@@ -157,7 +164,6 @@ async def get_job_description(job_url: str) -> str:
         finally:
             await browser.close()
 
-
 def compare_job_with_resume(job_text: str, user_id: str) -> float:
     """Compare each job with resume using Cosine similarity."""
     if user_id not in resume_embedding_store:
@@ -166,12 +172,14 @@ def compare_job_with_resume(job_text: str, user_id: str) -> float:
     similarity = util.cos_sim(resume_embedding_store[user_id], job_embedding).item()
     return similarity
 
-from langchain_openai import ChatOpenAI
-llm = ChatOpenAI(model="gpt-4.1-nano")
+# --- Gemini API Replacement ---
+from langchain_google_genai import ChatGoogleGenerativeAI
+# Using gemini-2.5-flash as a fast, high-quality replacement for gpt-4.1-nano
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
 
 
 def generate_cover_letter(resume: str, job_desc: str) -> str:
-    """Generate cover letter using OpenAI API."""
+    """Generate cover letter using Gemini API."""
     prompt = f"""
     Based on the following resume:
     {resume}
@@ -179,15 +187,19 @@ def generate_cover_letter(resume: str, job_desc: str) -> str:
     Write a tailored cover letter of around 200 words for this job description:
     {job_desc}
     """
+    # LangChain's .invoke() method works the same for ChatGoogleGenerativeAI as for ChatOpenAI
     cover_letter = llm.invoke(prompt).content
     return str(cover_letter)
 
 
+# --- Remaining functions remain the same as they use LangChain/LangGraph logic ---
+# ... (omitted for brevity, assume they are pasted here unchanged) ...
+
 async def fetch_all_job_descriptions(state: AgentState) -> AgentState:
     descriptions = {}
     for url in state["job_links"]:
-        if url is None: 
-            continue 
+        if url is None:  
+            continue  
         desc = await get_job_description(job_url=url)
         descriptions[url] = {"description": desc}
     state["job_results"] = descriptions
@@ -210,6 +222,7 @@ def generate_all_cover_letters(state: AgentState) -> AgentState:
         if entry["similarity"] > 0.4:
             print(f"📝 Generating cover letter for {url} (similarity: {entry['similarity']:.2f})")
             
+            # The summarization logic is external and should handle the resume/job_desc well enough.
             summarized_resume = summarize_text(state["resume_text"], 10)
             summarized_job_desc = summarize_text(entry["description"], 10)
             
@@ -290,25 +303,25 @@ async def auto_apply_to_job(state: AgentState) -> AgentState:
             print(f"🚀 Applying to job: {url}")
             
             if page.url != url:
-               try:
-                   await page.goto(url, timeout=10000)
-                   await page.wait_for_selector("text=Apply", timeout=10000)
-                   await page.click("text=Apply")
-   
-                   # Wait for modal with textarea and Send button
-                   await page.wait_for_selector("textarea", timeout=10000)
-                   await page.fill("textarea", str(entry["cover_letter"]))
-                   await page.click("button:has-text('Send')")
-                   await page.wait_for_timeout(5000)  # Wait for application to process
-                   entry["applied"] = True
-                   print("✅ Successfully applied.")
-               except PlaywrightTimeoutError:
-                   print(f"❌ Failed to apply to job: {url}")
-                   entry["applied"] = False
-               except Exception as e:
-                   print(f"⚠️ Unexpected error for {url}: {e}")
-                   entry["applied"] = False
-            else: 
+                try:
+                    await page.goto(url, timeout=10000)
+                    await page.wait_for_selector("text=Apply", timeout=10000)
+                    await page.click("text=Apply")
+    
+                    # Wait for modal with textarea and Send button
+                    await page.wait_for_selector("textarea", timeout=10000)
+                    await page.fill("textarea", str(entry["cover_letter"]))
+                    await page.click("button:has-text('Send')")
+                    await page.wait_for_timeout(5000)  # Wait for application to process
+                    entry["applied"] = True
+                    print("✅ Successfully applied.")
+                except PlaywrightTimeoutError:
+                    print(f"❌ Failed to apply to job: {url}")
+                    entry["applied"] = False
+                except Exception as e:
+                    print(f"⚠️ Unexpected error for {url}: {e}")
+                    entry["applied"] = False
+            else:  
                 print(f"🟢 Already on job page: {url}")
 
         await browser.close()
@@ -364,6 +377,7 @@ if __name__ == "__main__":
     import getpass
     from read_pdf import read_pdf
 
+    print("⚠️ Please ensure your GOOGLE_API_KEY environment variable is set.")
     username = input("Enter your ycombinator username: ")
     password = getpass.getpass("Enter your ycombinator password: ")
     filter_url = input("Enter the Job Portal URL (e.g., https://www.workatastartup.com/companies?demographic=any&hasEquity=any&hasSalary=any&industry=any&interviewProcess=any&jobType=fulltime&layout=list-compact&minExperience=0&minExperience=1&remote=yes&role=eng&role_type=fe&role_type=fs&sortBy=created_desc&tab=any&usVisaNotRequired=any): ")
@@ -382,4 +396,3 @@ if __name__ == "__main__":
     pdf_text = read_pdf(resume_file)
 
     asyncio.run(run_graph(pdf_text, user_id, username, password, filter_url, no_jobs))
-
